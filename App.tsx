@@ -22,6 +22,7 @@ const App: React.FC = () => {
     storyboardUrls: [],
   });
   const [autoLoop, setAutoLoop] = useState(true); // Default to true for autonomous behavior
+  const [manualTopic, setManualTopic] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
 
   // YouTube State
@@ -200,6 +201,25 @@ const App: React.FC = () => {
     // Clear Refs manually to ensure no stale data spills over
     assetsRef.current = { thumbnailUrl: null, thumbnailVariants: [], videoUrl: null, audioUrl: null, storyboardUrls: [] };
     scriptDataRef.current = null;
+
+    // MANUAL OVERRIDE CHECK
+    // If Auto-Loop is OFF and user typed a topic, use it.
+    if (!autoLoop && manualTopic.trim()) {
+        addLog(`MANUAL OVERRIDE: Using User Topic -> "${manualTopic}"`, "success");
+        try {
+            // Treat manual input as a "Forced Concept" for the research tool
+            const topics = await GeminiService.researchTrends(manualTopic);
+            if (topics.length > 0) {
+                const selected = topics[0]; // Take the first relevant generation
+                setCurrentTopic(selected);
+                addLog(`Generated concept for: "${manualTopic}"`, "success");
+                generateContent(selected);
+                return;
+            }
+        } catch (e: any) {
+            addLog(`Manual topic failed: ${e.message}. Falling back to auto.`, "error");
+        }
+    }
 
     // HYBRID STRATEGY:
     // 30% Chance -> Live Trend Search (AI, Tech, Politics, News) - To keep channel updated.
@@ -489,6 +509,17 @@ const App: React.FC = () => {
            <button onClick={() => setShowSettings(true)} className="text-gray-400 hover:text-white">
              <Settings className="w-5 h-5" />
            </button>
+           <div className="flex items-center gap-2">
+             {!autoLoop && (
+                 <input 
+                    type="text" 
+                    placeholder="Enter manual topic..." 
+                    value={manualTopic}
+                    onChange={(e) => setManualTopic(e.target.value)}
+                    className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white w-48 focus:border-cyan-500 outline-none placeholder-gray-500"
+                 />
+             )}
+           </div>
         
            <div className="flex items-center gap-2">
              <span className="text-sm text-gray-400">Autonomous Mode</span>
