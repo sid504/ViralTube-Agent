@@ -561,14 +561,21 @@ const App: React.FC = () => {
   // Handle image file uploads for custom storyboards
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
+    
+    const imageFiles = Array.from(files).filter((file: File) => file.type.startsWith('image/'));
+    
+    if (imageFiles.length === 0) {
+      console.log('No image files selected');
+      return;
+    }
+    
+    console.log(`Processing ${imageFiles.length} image files...`);
     
     const newImages: string[] = [];
     let processed = 0;
     
-    Array.from(files).forEach((file: File) => {
-      if (!file.type.startsWith('image/')) return;
-      
+    imageFiles.forEach((file: File) => {
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
@@ -576,8 +583,16 @@ const App: React.FC = () => {
         }
         processed++;
         
-        // When all files are processed, update state
-        if (processed === files.length) {
+        // When all image files are processed, update state
+        if (processed === imageFiles.length) {
+          console.log(`Loaded ${newImages.length} images, updating state...`);
+          setCustomImages(prev => [...prev, ...newImages]);
+        }
+      };
+      reader.onerror = () => {
+        processed++;
+        console.error(`Failed to read file: ${file.name}`);
+        if (processed === imageFiles.length) {
           setCustomImages(prev => [...prev, ...newImages]);
         }
       };
