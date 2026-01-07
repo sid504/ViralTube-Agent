@@ -307,20 +307,122 @@ export const generateStoryboardImages = async (topic: string, outline: string[])
 };
 
 export const generateVoiceover = async (text: string, voiceName: string = 'Puck'): Promise<string> => {
-  return withRetry(async () => {
-    const ai = getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-preview-tts',
-      contents: { parts: [{ text }] },
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } }
+  const ai = getClient();
+
+  // Split text into smaller chunks for clearer audio quality
+  // Long text causes TTS degradation - splitting fixes distortion issues
+  const splitIntoChunks = (text: string, maxLength: number = 800): string[] => {
+    const chunks: string[] = [];
+
+    // First split by paragraphs (double newlines)
+    const paragraphs = text.split(/\n\n+/).filter(p => p.trim());
+
+    for (const para of paragraphs) {
+      if (para.length <= maxLength) {
+        chunks.push(para.trim());
+      } else {
+        // If paragraph is too long, split by sentences
+        const sentences = para.split(/(?<=[.!?])\s+/);
+        let currentChunk = '';
+
+        for (const sentence of sentences) {
+          if ((currentChunk + ' ' + sentence).length <= maxLength) {
+            currentChunk = currentChunk ? currentChunk + ' ' + sentence : sentence;
+          } else {
+            if (currentChunk) chunks.push(currentChunk.trim());
+            currentChunk = sentence;
+          }
+        }
+        if (currentChunk) chunks.push(currentChunk.trim());
       }
-    });
-    const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!audioData) throw new Error("No audio generated");
-    return audioData;
+    }
+
+    return chunks.filter(c => c.length > 0);
+  };
+
+  const chunks = splitIntoChunks(text);
+  console.log(`TTS: Generating audio for ${chunks.length} text chunks for better quality...`);
+
+  // Generate audio for each chunk
+  const audioChunks: string[] = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    console.log(`TTS: Processing chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
+
+    const audioData = await withRetry(async () => {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-tts',
+        contents: { parts: [{ text: chunk }] },
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName }
+            }
+          }
+        }
+      });
+      const data = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!data) throw new Error(`No audio generated for chunk ${i + 1}`);
+      return data;
+    }, 3);
+
+    audioChunks.push(audioData);
+
+    // Small delay between chunks to avoid rate limits
+    if (i < chunks.length - 1) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
+  // Concatenate all audio chunks (they're base64 PCM data)
+  if (audioChunks.length === 1) {
+    return audioChunks[0];
+  }
+
+  // Decode all base64 chunks, concatenate binary, re-encode
+  const binaryArrays = audioChunks.map(base64 => {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
   });
+
+  // Add small silence between chunks (480 samples = 20ms at 24kHz, 16-bit = 960 bytes)
+  const silenceBytes = new Uint8Array(960); // Zero-filled = silence
+
+  // Calculate total length
+  let totalLength = 0;
+  for (let i = 0; i < binaryArrays.length; i++) {
+    totalLength += binaryArrays[i].length;
+    if (i < binaryArrays.length - 1) {
+      totalLength += silenceBytes.length; // Add silence between chunks
+    }
+  }
+
+  // Combine all arrays
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (let i = 0; i < binaryArrays.length; i++) {
+    combined.set(binaryArrays[i], offset);
+    offset += binaryArrays[i].length;
+    if (i < binaryArrays.length - 1) {
+      combined.set(silenceBytes, offset);
+      offset += silenceBytes.length;
+    }
+  }
+
+  // Convert back to base64
+  let binaryString = '';
+  for (let i = 0; i < combined.length; i++) {
+    binaryString += String.fromCharCode(combined[i]);
+  }
+
+  console.log(`TTS: Successfully combined ${audioChunks.length} audio chunks`);
+  return btoa(binaryString);
 };
 
 export const generateVideoPreview = async (topic: string, hook: string): Promise<string> => {
