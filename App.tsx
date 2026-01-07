@@ -23,6 +23,8 @@ const App: React.FC = () => {
   });
   const [autoLoop, setAutoLoop] = useState(true); // Default to true for autonomous behavior
   const [manualTopic, setManualTopic] = useState("");
+  const [customScript, setCustomScript] = useState("");
+  const [useCustomScript, setUseCustomScript] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
   // YouTube State
@@ -202,7 +204,62 @@ const App: React.FC = () => {
     assetsRef.current = { thumbnailUrl: null, thumbnailVariants: [], videoUrl: null, audioUrl: null, storyboardUrls: [] };
     scriptDataRef.current = null;
 
-    // MANUAL OVERRIDE CHECK
+    // CUSTOM SCRIPT OVERRIDE CHECK
+    // If Auto-Loop is OFF and user provided custom script, use it directly
+    if (!autoLoop && useCustomScript && customScript.trim()) {
+        addLog(`CUSTOM SCRIPT: Skipping AI generation, using user-provided script.`, "success");
+        try {
+            // Parse custom script into ScriptData format
+            const lines = customScript.trim().split('\n');
+            const title = lines[0] || "Custom Video";
+            const scriptContent = customScript.trim();
+            
+            // Extract first sentence as hook
+            const hookMatch = scriptContent.match(/[^.!?]*[.!?]/);
+            const hook = hookMatch ? hookMatch[0].trim() : lines[0];
+            
+            // Create outline from paragraphs
+            const paragraphs = scriptContent.split('\n\n').filter(p => p.trim());
+            const outline = paragraphs.slice(0, 10).map((p, i) => 
+                `Scene ${i + 1}: ${p.substring(0, 50)}...`
+            );
+            
+            const parsedScript: ScriptData = {
+                title: title,
+                thumbnailText: title.substring(0, 30),
+                description: `${title} - Custom content created with ViralTube Agent.`,
+                tags: ['custom', 'video', 'content'],
+                fullScriptContent: scriptContent,
+                fullScriptOutline: outline.length > 0 ? outline : ['Custom script content'],
+                hook: hook
+            };
+            
+            // Create a synthetic topic
+            const syntheticTopic: TrendTopic = {
+                id: `custom-${Date.now()}`,
+                headline: title,
+                category: 'Custom',
+                viralityScore: 100,
+                description: 'User-provided custom script',
+                sources: []
+            };
+            
+            setCurrentTopic(syntheticTopic);
+            setScriptData(parsedScript);
+            scriptDataRef.current = parsedScript;
+            
+            addLog(`Custom script loaded: "${title}"`, "success");
+            addLog("Skipping script generation, proceeding to asset creation...", "info");
+            
+            // Skip generateContent, go directly to asset generation
+            generateMediaAssets(syntheticTopic, parsedScript);
+            return;
+        } catch (e: any) {
+            addLog(`Custom script parsing failed: ${e.message}. Falling back to auto.`, "error");
+        }
+    }
+
+    // MANUAL TOPIC OVERRIDE CHECK
     // If Auto-Loop is OFF and user typed a topic, use it.
     if (!autoLoop && manualTopic.trim()) {
         addLog(`MANUAL OVERRIDE: Using User Topic -> "${manualTopic}"`, "success");
@@ -483,6 +540,69 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Custom Script Modal */}
+      <div id="script-modal" className="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-gray-900 border border-purple-700 rounded-xl p-6 w-full max-w-2xl shadow-2xl">
+           <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <FileText className="w-5 h-5 text-purple-400" />
+                Custom Script
+              </h3>
+              <button 
+                onClick={() => {
+                  const modal = document.getElementById('script-modal');
+                  if (modal) modal.classList.add('hidden');
+                }} 
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+           </div>
+           
+           <div className="space-y-4">
+              <div>
+                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Your Script (First line = Title)</label>
+                 <textarea 
+                   value={customScript}
+                   onChange={(e) => setCustomScript(e.target.value)}
+                   placeholder={`Enter your full script here...\n\nFormat:\nLine 1: Video Title\nLine 2+: Your script content\n\nTip: Use paragraph breaks (double newlines) to separate scenes for better visual outline generation.`}
+                   className="w-full h-64 bg-black border border-gray-700 rounded p-3 text-sm text-gray-300 focus:border-purple-500 outline-none resize-none font-mono"
+                 />
+                 <div className="flex justify-between mt-2 text-xs text-gray-500">
+                   <span>Characters: {customScript.length}</span>
+                   <span>Est. Duration: ~{Math.max(1, Math.round(customScript.split(' ').length / 130))} min</span>
+                 </div>
+              </div>
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    setCustomScript('');
+                    const modal = document.getElementById('script-modal');
+                    if (modal) modal.classList.add('hidden');
+                  }}
+                  className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 rounded-lg transition-all"
+                >
+                  Clear & Close
+                </button>
+                <button 
+                  onClick={() => {
+                    const modal = document.getElementById('script-modal');
+                    if (modal) modal.classList.add('hidden');
+                  }}
+                  className="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 rounded-lg transition-all"
+                >
+                  Save Script
+                </button>
+              </div>
+              
+              <p className="text-[10px] text-gray-500 text-center">
+                When you start the agent with a custom script, it will skip AI script generation and directly proceed to asset creation.
+              </p>
+           </div>
+        </div>
+      </div>
+
       {/* Header */}
       <header className="h-16 border-b border-gray-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center gap-3">
@@ -509,17 +629,43 @@ const App: React.FC = () => {
            <button onClick={() => setShowSettings(true)} className="text-gray-400 hover:text-white">
              <Settings className="w-5 h-5" />
            </button>
-           <div className="flex items-center gap-2">
-             {!autoLoop && (
-                 <input 
-                    type="text" 
-                    placeholder="Enter manual topic..." 
-                    value={manualTopic}
-                    onChange={(e) => setManualTopic(e.target.value)}
-                    className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white w-48 focus:border-cyan-500 outline-none placeholder-gray-500"
-                 />
-             )}
-           </div>
+           {/* Manual Input Options - only show when not in auto mode */}
+           {!autoLoop && (
+             <div className="flex items-center gap-2">
+                {/* Toggle between Topic and Script input */}
+                <button
+                   onClick={() => setUseCustomScript(!useCustomScript)}
+                   className={`text-xs px-2 py-1 rounded border transition-all ${
+                     useCustomScript 
+                       ? 'bg-purple-600 border-purple-500 text-white' 
+                       : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-500'
+                   }`}
+                >
+                   {useCustomScript ? '📝 Script' : '💡 Topic'}
+                </button>
+                
+                {!useCustomScript ? (
+                  <input 
+                     type="text" 
+                     placeholder="Enter manual topic..." 
+                     value={manualTopic}
+                     onChange={(e) => setManualTopic(e.target.value)}
+                     className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white w-48 focus:border-cyan-500 outline-none placeholder-gray-500"
+                  />
+                ) : (
+                  <button
+                     onClick={() => {
+                       const modal = document.getElementById('script-modal');
+                       if (modal) modal.classList.remove('hidden');
+                     }}
+                     className="bg-purple-700 hover:bg-purple-600 text-white text-xs px-3 py-1 rounded flex items-center gap-1"
+                  >
+                     <FileText className="w-3 h-3" />
+                     {customScript ? 'Edit Script' : 'Add Script'}
+                  </button>
+                )}
+             </div>
+           )}
         
            <div className="flex items-center gap-2">
              <span className="text-sm text-gray-400">Autonomous Mode</span>
