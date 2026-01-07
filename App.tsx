@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Bot, RefreshCw, UploadCloud, Youtube, PlayCircle, Settings, FileText, AlertTriangle, Link, LogOut, X, Loader2, CheckCircle, Lock } from 'lucide-react';
+import { Bot, RefreshCw, UploadCloud, Youtube, PlayCircle, Settings, FileText, AlertTriangle, Link, LogOut, X, Loader2, CheckCircle, Lock, Image } from 'lucide-react';
 import { AgentStatus, TrendTopic, ScriptData, GeneratedAssets, AgentLog, YouTubeUser } from './types';
 import * as GeminiService from './services/gemini';
 import * as YouTubeService from './services/youtube';
@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [customScript, setCustomScript] = useState("");
   const [useCustomScript, setUseCustomScript] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isRegeneratingThumbnails, setIsRegeneratingThumbnails] = useState(false);
 
   // YouTube State
   const [showSettings, setShowSettings] = useState(false);
@@ -493,6 +494,42 @@ const App: React.FC = () => {
     setShowSettings(false);
   };
 
+  // Regenerate thumbnails function for non-auto mode
+  const regenerateThumbnails = async () => {
+    if (!currentTopic || !scriptData) {
+      addLog("Cannot regenerate: Missing topic or script data.", "error");
+      return;
+    }
+    
+    setIsRegeneratingThumbnails(true);
+    addLog("Regenerating thumbnail variations...", "info");
+    
+    try {
+      const thumbVariants = await GeminiService.generateThumbnailVariations(
+        currentTopic.headline, 
+        scriptData.title, 
+        scriptData.thumbnailText
+      );
+      
+      // Update assets with new thumbnails
+      setAssets(prev => {
+        const next = { 
+          ...prev, 
+          thumbnailVariants: thumbVariants,
+          thumbnailUrl: thumbVariants[0] || null
+        };
+        assetsRef.current = next;
+        return next;
+      });
+      
+      addLog(`Generated ${thumbVariants.length} new thumbnail variations!`, "success");
+    } catch (error: any) {
+      addLog(`Thumbnail regeneration failed: ${error.message}`, "error");
+    } finally {
+      setIsRegeneratingThumbnails(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-gray-100 flex flex-col font-sans selection:bg-cyan-500/30">
       
@@ -779,6 +816,30 @@ const App: React.FC = () => {
           <div className="mt-auto">
              {status === AgentStatus.REVIEW && (
                 <div className="flex flex-col gap-2">
+                    {/* Regenerate Thumbnails - Only in Non-Auto Mode */}
+                    {!autoLoop && (
+                      <button 
+                        onClick={regenerateThumbnails}
+                        disabled={isRegeneratingThumbnails}
+                        className={`w-full font-medium py-2 rounded-lg flex items-center justify-center gap-2 transition-all border
+                        ${isRegeneratingThumbnails 
+                            ? 'bg-gray-800 border-gray-600 text-gray-400 cursor-not-allowed' 
+                            : 'bg-gray-800 border-purple-600 text-purple-300 hover:bg-purple-900/30 hover:border-purple-500'}`}
+                      >
+                        {isRegeneratingThumbnails ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Regenerating...
+                          </>
+                        ) : (
+                          <>
+                            <Image className="w-4 h-4" />
+                            Regenerate Thumbnails
+                          </>
+                        )}
+                      </button>
+                    )}
+                    
                     <button 
                     onClick={initiateUpload}
                     className={`w-full font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all 
