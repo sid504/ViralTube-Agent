@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Bot, RefreshCw, UploadCloud, Youtube, PlayCircle, Settings, FileText, AlertTriangle, Link, LogOut, X, Loader2, CheckCircle, Lock, Image } from 'lucide-react';
+import { Bot, RefreshCw, UploadCloud, Youtube, PlayCircle, Settings, FileText, AlertTriangle, Link, LogOut, X, Loader2, CheckCircle, Lock, Image, ImagePlus, Trash2 } from 'lucide-react';
 import { AgentStatus, TrendTopic, ScriptData, GeneratedAssets, AgentLog, YouTubeUser } from './types';
 import * as GeminiService from './services/gemini';
 import * as YouTubeService from './services/youtube';
@@ -27,6 +27,7 @@ const App: React.FC = () => {
   const [useCustomScript, setUseCustomScript] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isRegeneratingThumbnails, setIsRegeneratingThumbnails] = useState(false);
+  const [customImages, setCustomImages] = useState<string[]>([]); // User-uploaded images as data URLs
 
   // YouTube State
   const [showSettings, setShowSettings] = useState(false);
@@ -42,6 +43,7 @@ const App: React.FC = () => {
   // CRITICAL: Refs to hold latest data for immediate access by automation without waiting for re-renders
   const assetsRef = useRef<GeneratedAssets>(assets);
   const scriptDataRef = useRef<ScriptData | null>(scriptData);
+  const customImagesRef = useRef<string[]>([]);
 
   // Sync Refs
   useEffect(() => {
@@ -59,6 +61,10 @@ const App: React.FC = () => {
   useEffect(() => {
     scriptDataRef.current = scriptData;
   }, [scriptData]);
+
+  useEffect(() => {
+    customImagesRef.current = customImages;
+  }, [customImages]);
 
   // Logging Helper
   const addLog = useCallback((message: string, type: AgentLog['type'] = 'info') => {
@@ -395,9 +401,31 @@ const App: React.FC = () => {
           return next;
       });
 
-      // 3. Storyboards (Increased count for long video)
-      addLog("Generating Extended Storyboard Visuals (20+ images)...", "info");
-      const storyboards = await GeminiService.generateStoryboardImages(topic.headline, script.fullScriptOutline);
+      // 3. Storyboards - Use custom images first, generate remaining with AI
+      const userImages = customImagesRef.current || [];
+      const targetImageCount = 20; // Minimum images needed for long video
+      
+      if (userImages.length > 0) {
+        addLog(`Using ${userImages.length} custom images as storyboards...`, "success");
+      }
+      
+      let storyboards: string[] = [...userImages];
+      
+      // Only generate AI images if we need more
+      if (storyboards.length < targetImageCount) {
+        const neededCount = targetImageCount - storyboards.length;
+        addLog(`Generating ${neededCount} additional AI storyboard visuals...`, "info");
+        
+        // Adjust outline to only generate what we need
+        const outlineForGeneration = script.fullScriptOutline.slice(0, neededCount);
+        const aiStoryboards = await GeminiService.generateStoryboardImages(topic.headline, outlineForGeneration);
+        storyboards = [...storyboards, ...aiStoryboards];
+        
+        addLog(`Generated ${aiStoryboards.length} AI images. Total: ${storyboards.length}`, "success");
+      } else {
+        addLog(`Custom images sufficient (${storyboards.length} images). Skipping AI generation.`, "success");
+      }
+      
       currentAssets.storyboardUrls = storyboards;
       
       // Update State & Ref
@@ -530,6 +558,41 @@ const App: React.FC = () => {
     }
   };
 
+  // Handle image file uploads for custom storyboards
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    
+    const newImages: string[] = [];
+    let processed = 0;
+    
+    Array.from(files).forEach((file: File) => {
+      if (!file.type.startsWith('image/')) return;
+      
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          newImages.push(event.target.result as string);
+        }
+        processed++;
+        
+        // When all files are processed, update state
+        if (processed === files.length) {
+          setCustomImages(prev => [...prev, ...newImages]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+    
+    // Reset input
+    e.target.value = '';
+  };
+
+  // Remove a specific custom image
+  const removeCustomImage = (index: number) => {
+    setCustomImages(prev => prev.filter((_, i) => i !== index));
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-gray-100 flex flex-col font-sans selection:bg-cyan-500/30">
       
@@ -611,10 +674,56 @@ const App: React.FC = () => {
                  </div>
               </div>
               
+              {/* Custom Images Upload Section */}
+              <div className="border border-gray-700 rounded-lg p-3 bg-gray-800/50">
+                 <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-2">
+                      <ImagePlus className="w-4 h-4" />
+                      Custom Images (Optional)
+                    </label>
+                    <span className="text-xs text-gray-500">{customImages.length} images</span>
+                 </div>
+                 
+                 <p className="text-[10px] text-gray-500 mb-2">
+                   Add your own images to use as storyboards. If not enough, AI will generate the rest.
+                 </p>
+                 
+                 {/* Image Preview Grid */}
+                 {customImages.length > 0 && (
+                   <div className="grid grid-cols-4 gap-2 mb-3 max-h-32 overflow-y-auto">
+                     {customImages.map((img, idx) => (
+                       <div key={idx} className="relative aspect-video group">
+                         <img src={img} alt={`Upload ${idx + 1}`} className="w-full h-full object-cover rounded border border-gray-600" />
+                         <button 
+                           onClick={() => removeCustomImage(idx)}
+                           className="absolute -top-1 -right-1 bg-red-600 text-white p-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                         >
+                           <X className="w-3 h-3" />
+                         </button>
+                       </div>
+                     ))}
+                   </div>
+                 )}
+                 
+                 {/* Upload Button */}
+                 <label className="flex items-center justify-center gap-2 bg-gray-700 hover:bg-gray-600 text-gray-300 py-2 rounded-lg cursor-pointer transition-colors">
+                   <UploadCloud className="w-4 h-4" />
+                   <span className="text-sm">Upload Images</span>
+                   <input 
+                     type="file" 
+                     accept="image/*" 
+                     multiple 
+                     onChange={handleImageUpload}
+                     className="hidden" 
+                   />
+                 </label>
+              </div>
+              
               <div className="flex gap-2">
                 <button 
                   onClick={() => {
                     setCustomScript('');
+                    setCustomImages([]);
                     const modal = document.getElementById('script-modal');
                     if (modal) modal.classList.add('hidden');
                   }}
